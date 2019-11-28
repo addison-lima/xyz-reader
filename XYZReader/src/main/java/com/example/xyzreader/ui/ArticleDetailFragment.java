@@ -17,6 +17,8 @@ import java.util.Date;
 import java.util.GregorianCalendar;
 
 import android.os.Bundle;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.v4.app.ShareCompat;
 import android.support.v7.graphics.Palette;
 import android.text.Html;
@@ -26,6 +28,7 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -33,6 +36,8 @@ import com.android.volley.VolleyError;
 import com.android.volley.toolbox.ImageLoader;
 import com.example.xyzreader.R;
 import com.example.xyzreader.data.ArticleLoader;
+
+import static com.example.xyzreader.ui.ArticleListActivity.TRANSITION_NAME;
 
 /**
  * A fragment representing a single Article detail screen. This fragment is
@@ -45,6 +50,9 @@ public class ArticleDetailFragment extends Fragment implements
 
     public static final String ARG_ITEM_ID = "item_id";
     private static final float PARALLAX_FACTOR = 1.25f;
+
+    private static final String ARGUMENT_START_POSITION = "argument_start_position";
+    private static final String ARGUMENT_CURRENT_POSITION = "argument_current_position";
 
     private Cursor mCursor;
     private long mItemId;
@@ -67,6 +75,9 @@ public class ArticleDetailFragment extends Fragment implements
     // Most time functions can only handle 1902 - 2037
     private GregorianCalendar START_OF_EPOCH = new GregorianCalendar(2,1,1);
 
+    private int mStartPosition;
+    private int mCurrentPosition;
+
     /**
      * Mandatory empty constructor for the fragment manager to instantiate the
      * fragment (e.g. upon screen orientation changes).
@@ -74,9 +85,13 @@ public class ArticleDetailFragment extends Fragment implements
     public ArticleDetailFragment() {
     }
 
-    public static ArticleDetailFragment newInstance(long itemId) {
+    public static ArticleDetailFragment newInstance(long itemId, int position) {
         Bundle arguments = new Bundle();
         arguments.putLong(ARG_ITEM_ID, itemId);
+
+        arguments.putInt(ARGUMENT_CURRENT_POSITION, position);
+        arguments.putInt(ARGUMENT_START_POSITION, position);
+
         ArticleDetailFragment fragment = new ArticleDetailFragment();
         fragment.setArguments(arguments);
         return fragment;
@@ -85,6 +100,9 @@ public class ArticleDetailFragment extends Fragment implements
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        mStartPosition = getArguments().getInt(ARGUMENT_START_POSITION);
+        mCurrentPosition = getArguments().getInt(ARGUMENT_CURRENT_POSITION);
 
         if (getArguments().containsKey(ARG_ITEM_ID)) {
             mItemId = getArguments().getLong(ARG_ITEM_ID);
@@ -115,6 +133,11 @@ public class ArticleDetailFragment extends Fragment implements
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
             Bundle savedInstanceState) {
         mRootView = inflater.inflate(R.layout.fragment_article_detail, container, false);
+
+        mPhotoView = (ImageView) mRootView.findViewById(R.id.photo);
+        String transitionName = TRANSITION_NAME + mCurrentPosition;
+        mPhotoView.setTransitionName(transitionName);
+
         mDrawInsetsFrameLayout = (DrawInsetsFrameLayout)
                 mRootView.findViewById(R.id.draw_insets_frame_layout);
         mDrawInsetsFrameLayout.setOnInsetsCallback(new DrawInsetsFrameLayout.OnInsetsCallback() {
@@ -135,7 +158,6 @@ public class ArticleDetailFragment extends Fragment implements
             }
         });
 
-        mPhotoView = (ImageView) mRootView.findViewById(R.id.photo);
         mPhotoContainerView = mRootView.findViewById(R.id.photo_container);
 
         mStatusBarColorDrawable = new ColorDrawable(0);
@@ -153,6 +175,19 @@ public class ArticleDetailFragment extends Fragment implements
         bindViews();
         updateStatusBar();
         return mRootView;
+    }
+
+    @Nullable
+    public ImageView getArticlePhotoView() {
+        return (isViewInBounds(getActivity().getWindow().getDecorView(), mPhotoView))
+                ? mPhotoView
+                : null;
+    }
+
+    private static boolean isViewInBounds(@NonNull View container, @NonNull View view) {
+        Rect containerBounds = new Rect();
+        container.getHitRect(containerBounds);
+        return view.getLocalVisibleRect(containerBounds);
     }
 
     private void updateStatusBar() {
@@ -232,7 +267,12 @@ public class ArticleDetailFragment extends Fragment implements
                                 + "</font>"));
 
             }
-            bodyView.setText(Html.fromHtml(mCursor.getString(ArticleLoader.Query.BODY).replaceAll("(\r\n|\n)", "<br />")));
+
+            String body = mCursor.getString(ArticleLoader.Query.BODY)
+                    .substring(0, 1000)
+                    .replaceAll("(\r\n|\n)", "<br />");
+            bodyView.setText(Html.fromHtml(body));
+
             ImageLoaderHelper.getInstance(getActivity()).getImageLoader()
                     .get(mCursor.getString(ArticleLoader.Query.PHOTO_URL), new ImageLoader.ImageListener() {
                         @Override
@@ -268,6 +308,8 @@ public class ArticleDetailFragment extends Fragment implements
 
     @Override
     public void onLoadFinished(Loader<Cursor> cursorLoader, Cursor cursor) {
+        startPostponedEnterTransition();
+
         if (!isAdded()) {
             if (cursor != null) {
                 cursor.close();
@@ -300,5 +342,18 @@ public class ArticleDetailFragment extends Fragment implements
         return mIsCard
                 ? (int) mPhotoContainerView.getTranslationY() + mPhotoView.getHeight() - mScrollY
                 : mPhotoView.getHeight() - mScrollY;
+    }
+
+    private void startPostponedEnterTransition() {
+        if (mCurrentPosition == mStartPosition) {
+            mPhotoView.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    mPhotoView.getViewTreeObserver().removeOnPreDrawListener(this);
+                    getActivity().startPostponedEnterTransition();
+                    return true;
+                }
+            });
+        }
     }
 }

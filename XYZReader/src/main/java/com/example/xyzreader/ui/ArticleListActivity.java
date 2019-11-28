@@ -1,6 +1,8 @@
 package com.example.xyzreader.ui;
 
+import android.app.ActivityOptions;
 import android.app.LoaderManager;
+import android.app.SharedElementCallback;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -17,6 +19,7 @@ import android.text.format.DateUtils;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.widget.TextView;
 
 import com.example.xyzreader.R;
@@ -28,6 +31,8 @@ import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.GregorianCalendar;
+import java.util.List;
+import java.util.Map;
 
 /**
  * An activity representing a list of Articles. This activity has different presentations for
@@ -39,6 +44,33 @@ public class ArticleListActivity extends AppCompatActivity implements
         LoaderManager.LoaderCallbacks<Cursor>, SwipeRefreshLayout.OnRefreshListener {
 
     private static final String TAG = ArticleListActivity.class.toString();
+
+    public static final String EXTRA_START_POSITION = "start_position";
+    public static final String EXTRA_CURRENT_POSITION = "current_position";
+    public static final String TRANSITION_NAME = "transition_name_";
+
+    private Bundle mBundle;
+    private final SharedElementCallback mSharedElementCallback = new SharedElementCallback() {
+        @Override
+        public void onMapSharedElements(List<String> names, Map<String, View> sharedElements) {
+            if (mBundle != null) {
+                int startPosition = mBundle.getInt(EXTRA_START_POSITION);
+                int currentPosition = mBundle.getInt(EXTRA_CURRENT_POSITION);
+                if (startPosition != currentPosition) {
+                    String transitionName = TRANSITION_NAME + currentPosition;
+                    View sharedElement = mRecyclerView.findViewWithTag(transitionName);
+                    if (sharedElement != null) {
+                        names.clear();
+                        names.add(transitionName);
+                        sharedElements.clear();
+                        sharedElements.put(transitionName, sharedElement);
+                    }
+                }
+                mBundle = null;
+            }
+        }
+    };
+
     private SwipeRefreshLayout mSwipeRefreshLayout;
     private RecyclerView mRecyclerView;
 
@@ -52,6 +84,7 @@ public class ArticleListActivity extends AppCompatActivity implements
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_article_list);
+        setExitSharedElementCallback(mSharedElementCallback);
 
         mSwipeRefreshLayout = (SwipeRefreshLayout) findViewById(R.id.swipe_refresh_layout);
         mSwipeRefreshLayout.setOnRefreshListener(this);
@@ -62,6 +95,28 @@ public class ArticleListActivity extends AppCompatActivity implements
         if (savedInstanceState == null) {
             refresh();
         }
+    }
+
+    @Override
+    public void onActivityReenter(int resultCode, Intent data) {
+        super.onActivityReenter(resultCode, data);
+        mBundle = new Bundle(data.getExtras());
+        int startingPosition = mBundle.getInt(EXTRA_START_POSITION);
+        int currentPosition = mBundle.getInt(EXTRA_CURRENT_POSITION);
+        if (startingPosition != currentPosition) {
+            mRecyclerView.scrollToPosition(currentPosition);
+        }
+        postponeEnterTransition();
+        mRecyclerView.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            @Override
+            public boolean onPreDraw() {
+                mRecyclerView.getViewTreeObserver().removeOnPreDrawListener(this);
+                // TODO: figure out why it is necessary to request layout here in order to get a smooth transition.
+                mRecyclerView.requestLayout();
+                startPostponedEnterTransition();
+                return true;
+            }
+        });
     }
 
     private void refresh() {
@@ -143,8 +198,19 @@ public class ArticleListActivity extends AppCompatActivity implements
             view.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    startActivity(new Intent(Intent.ACTION_VIEW,
-                            ItemsContract.Items.buildItemUri(getItemId(vh.getAdapterPosition()))));
+                    long itemId = getItemId(vh.getAdapterPosition());
+
+                    Intent intent = new Intent(Intent.ACTION_VIEW,
+                            ItemsContract.Items.buildItemUri(itemId));
+                    intent.putExtra(EXTRA_START_POSITION, vh.position);
+
+                    ActivityOptions options = ActivityOptions
+                            .makeSceneTransitionAnimation(
+                                    ArticleListActivity.this,
+                                    vh.thumbnailView,
+                                    vh.thumbnailView.getTransitionName()
+                            );
+                    startActivity(intent, options.toBundle());
                 }
             });
             return vh;
@@ -185,6 +251,11 @@ public class ArticleListActivity extends AppCompatActivity implements
                     mCursor.getString(ArticleLoader.Query.THUMB_URL),
                     ImageLoaderHelper.getInstance(ArticleListActivity.this).getImageLoader());
             holder.thumbnailView.setAspectRatio(mCursor.getFloat(ArticleLoader.Query.ASPECT_RATIO));
+
+            String transitionName = TRANSITION_NAME + position;
+            holder.thumbnailView.setTransitionName(transitionName);
+            holder.thumbnailView.setTag(transitionName);
+            holder.position = position;
         }
 
         @Override
@@ -197,6 +268,7 @@ public class ArticleListActivity extends AppCompatActivity implements
         public DynamicHeightNetworkImageView thumbnailView;
         public TextView titleView;
         public TextView subtitleView;
+        int position;
 
         public ViewHolder(View view) {
             super(view);
